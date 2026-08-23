@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   compliance:
@@ -20,6 +21,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::417521971848:role/GitHubActions-PlatformCompliance
+          aws-region: us-east-1
+
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -57,27 +67,27 @@ jobs:
           directory: terraform
           framework: terraform
 
-      # - name: Terraform Plan
-      #   working-directory: terraform
-      #   run: terraform plan -out=tfplan
+      - name: Terraform Plan
+        working-directory: terraform
+        run: terraform plan -out=tfplan
 
-      # - name: Convert Terraform Plan to JSON
-      #   working-directory: terraform
-      #   run: terraform show -json tfplan > tfplan.json
+      - name: Convert Terraform Plan to JSON
+        working-directory: terraform
+        run: terraform show -json tfplan > tfplan.json
 
-      # - name: Install Conftest
-      #   run: |
-      #     curl -s https://api.github.com/repos/open-policy-agent/conftest/releases/latest \
-      #       | grep "browser_download_url.*Linux_x86_64.tar.gz" \
-      #       | cut -d '"' -f 4 \
-      #       | xargs curl -L -o conftest.tar.gz
+      - name: Install Conftest
+        run: |
+          curl -s https://api.github.com/repos/open-policy-agent/conftest/releases/latest \
+            | grep "browser_download_url.*Linux_x86_64.tar.gz" \
+            | cut -d '"' -f 4 \
+            | xargs curl -L -o conftest.tar.gz
 
-      #     tar -xzf conftest.tar.gz
-      #     sudo mv conftest /usr/local/bin/
+          tar -xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/
 
-      # - name: Run OPA Compliance Policy
-      #   working-directory: terraform
-      #   run: |
-      #     conftest test tfplan.json \
-      #       --policy ../policies \
-      #       --namespace terraform
+      - name: Compliance Gate # Run OPA Compliance Policy
+        working-directory: terraform
+        run: |
+          conftest test tfplan.json \
+            --policy ../policies \
+            --namespace terraform
