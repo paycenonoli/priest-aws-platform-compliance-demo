@@ -4,6 +4,6 @@ resource "aws_s3_bucket" "compliance_demo" {
   tags = {
     Name        = "platform-compliance-demo"
     Environment = var.environment
-    Owner       = "Platform-Team"
+    # Owner       = "Platform-Team"
   }
 }
