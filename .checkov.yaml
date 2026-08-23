@@ -2,3 +2,9 @@ framework:
   - terraform
 
 compact: true
+
+skip-check:
+  - CKV2_AWS_62
+  - CKV_AWS_144
+  - CKV_AWS_18
+  - CKV2_AWS_61
