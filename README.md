@@ -1,0 +1,42 @@
+## Architecture
+
+```text
+Developer
+    │
+    ▼
+GitHub Pull Request
+    │
+    ▼
+GitHub Actions
+    │
+    ├── OIDC Authentication
+    │       │
+    │       ▼
+    │   AWS STS
+    │       │
+    │       ▼
+    │   IAM Role
+    │       │
+    │       ▼
+    │ Temporary credentials
+    │
+    ├── Terraform fmt
+    ├── Terraform validate
+    ├── TFLint
+    ├── Checkov
+    ├── Terraform plan
+    │       │
+    │       ▼
+    │   tfplan.json
+    │       │
+    │       ▼
+    └── OPA / Conftest
+            │
+            ▼
+      COMPLIANCE GATE
+         /       \
+      PASS       FAIL
+       │           │
+       ▼           ▼
+     Merge       Block
+```
