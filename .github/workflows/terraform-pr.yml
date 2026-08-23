@@ -85,7 +85,7 @@ jobs:
           tar -xzf conftest.tar.gz
           sudo mv conftest /usr/local/bin/
 
-      - name: Run OPA Compliance Policy
+      - name: Compliance Gate # Run OPA Compliance Policy
         working-directory: terraform
         run: |
           conftest test tfplan.json \
