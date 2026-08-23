@@ -1,366 +1,243 @@
+AWS Platform Compliance Demo
 
-````markdown
-# AWS Platform Compliance CI/CD Demo
+A production-style DevOps platform engineering demonstration that
+combines Terraform, GitHub Actions, AWS IAM/OIDC, TFLint, Checkov,
+OPA/Conftest, and automated Terraform deployment.
 
-A production-inspired DevSecOps / Platform Engineering demonstration showing how to integrate:
+The project demonstrates how infrastructure changes can move from a
+developer's pull request through automated security/compliance checks,
+into a controlled merge, and finally into AWS---without storing
+long-lived AWS access keys in GitHub.
 
-- GitHub Pull Requests
-- GitHub Actions
-- GitHub OIDC authentication
-- AWS IAM
-- AWS STS
-- Terraform
-- TFLint
-- Checkov
-- OPA / Conftest
-- Policy-as-Code
-- Terraform Plan
-- CI/CD compliance gates
+Current status: The GitHub Actions implementation is complete and
+has been successfully tested end-to-end.
+The Jenkins implementation is the next planned phase and will reuse
+the same Terraform infrastructure and compliance policies.
 
-The purpose of this project is to demonstrate how a Platform Engineer can enforce infrastructure security and organizational compliance **before infrastructure changes are merged**.
+1. What This Project Demonstrates
 
----
+This project answers a practical production question:
 
-# 1. Project Objective
+How do we make sure Terraform infrastructure is secure and compliant
+before it reaches AWS, while still allowing approved changes to be
+deployed automatically?
 
-This project demonstrates the following workflow:
+The implementation uses two separate stages:
 
-```text
-Developer
-    │
-    ▼
-GitHub Pull Request
-    │
-    ▼
-GitHub Actions
-    │
-    ├── OIDC Authentication
-    │       │
-    │       ▼
-    │   AWS STS
-    │       │
-    │       ▼
-    │   IAM Role
-    │       │
-    │       ▼
-    │ Temporary Credentials
-    │
-    ├── Terraform fmt
-    ├── Terraform validate
-    ├── TFLint
-    ├── Checkov
-    ├── Terraform plan
-    │       │
-    │       ▼
-    │   tfplan.json
-    │       │
-    │       ▼
-    └── OPA / Conftest
-            │
-            ▼
-      COMPLIANCE GATE
-         /       \
-      PASS       FAIL
-       │           │
-       ▼           ▼
-     Merge       Block
-````
+Pull Request / Compliance Pipeline
 
-The central idea is:
+Every relevant pull request runs:
 
-> **Infrastructure changes should be automatically validated for security and organizational compliance before they are allowed to merge.**
+Terraform formatting
 
----
+Terraform validation
 
-# 2. Why This Project Matters
+TFLint
 
-This architecture represents a common enterprise Platform Engineering / DevSecOps pattern.
+Checkov
 
-A developer should not be able to submit arbitrary infrastructure such as:
+Terraform plan
 
-```hcl
-resource "aws_s3_bucket" "example" {
-  bucket = "example"
-}
-```
+OPA / Conftest policy validation
 
-and immediately deploy it.
+The resulting Terraform plan is converted to JSON and evaluated against
+organizational policies.
 
-Instead, the CI/CD platform should automatically verify:
+If the compliance tests fail, the pull request is blocked.
 
-```text
-Is the Terraform valid?
-        ↓
-Are there Terraform/provider issues?
-        ↓
-Does the infrastructure violate security best practices?
-        ↓
-Does it violate organizational policies?
-        ↓
-If compliant → allow merge
-If non-compliant → block merge
-```
+Deployment Pipeline
 
-This is an example of:
+After the pull request passes compliance and is merged:
 
-* Shift-left security
-* Shift-left compliance
-* Infrastructure as Code governance
-* Policy-as-Code
-* DevSecOps
-* Continuous compliance
-* CI/CD enforcement
+GitHub Actions authenticates to AWS using OIDC
 
----
+Terraform initializes against the remote S3 state backend
 
-# 3. Technologies Used
+Terraform creates the approved infrastructure
 
-| Technology     | Purpose                                                     |
-| -------------- | ----------------------------------------------------------- |
-| GitHub         | Source control and Pull Requests                            |
-| GitHub Actions | CI/CD automation                                            |
-| GitHub OIDC    | Passwordless authentication to AWS                          |
-| AWS IAM        | Identity and authorization                                  |
-| AWS STS        | Issues temporary AWS credentials                            |
-| Terraform      | Infrastructure as Code                                      |
-| TFLint         | Terraform linting                                           |
-| Checkov        | Infrastructure security scanning                            |
-| OPA            | Policy engine                                               |
-| Conftest       | Executes OPA policies against configuration/data            |
-| AWS S3         | Example infrastructure resource                             |
-| KIND           | Optional local Kubernetes environment for future extensions |
+Terraform apply deploys the infrastructure to AWS
 
----
+2. Architecture
 
-# 4. High-Level Architecture
+Complete End-to-End Architecture
 
-```text
-                         ┌─────────────────┐
-                         │    Developer    │
-                         └────────┬────────┘
-                                  │
-                                  │ Pull Request
-                                  ▼
-                         ┌─────────────────┐
-                         │     GitHub      │
-                         │       PR        │
-                         └────────┬────────┘
-                                  │
-                                  ▼
-                       ┌─────────────────────┐
-                       │   GitHub Actions    │
-                       │      Runner         │
-                       └──────────┬──────────┘
-                                  │
-                   ┌──────────────┼──────────────┐
-                   │              │              │
-                   ▼              ▼              ▼
-                Terraform       TFLint        Checkov
-                   │              │              │
-                   │              │              │
-                   └──────────────┼──────────────┘
-                                  │
-                                  ▼
-                         Terraform Plan
-                                  │
-                                  ▼
-                             tfplan.json
-                                  │
-                                  ▼
-                         OPA / Conftest
-                                  │
-                                  ▼
-                        ┌──────────────────┐
-                        │ COMPLIANCE GATE  │
-                        └────────┬─────────┘
-                                 │
-                    ┌────────────┴────────────┐
-                    │                         │
-                    ▼                         ▼
-                  PASS                      FAIL
-                    │                         │
-                    ▼                         ▼
-              Pull Request               Pull Request
-                 passes                    blocked
-                    │
-                    ▼
-                  MERGE
-```
+                           DEVELOPER
+                               |
+                               v
+                       GitHub Pull Request
+                               |
+                               v
+                 +---------------------------+
+                 |    GitHub Actions         |
+                 |    PR Compliance          |
+                 +-------------+-------------+
+                               |
+              +----------------+----------------+
+              |                                 |
+              v                                 v
+      OIDC Authentication                 Terraform Checks
+              |                                 |
+              v                    +------------+------------+
+          AWS STS                  |            |            |
+              |                    v            v            v
+              v                 fmt/validate  TFLint      Checkov
+          IAM Role
+              |
+              v
+     Temporary AWS Credentials
+              |
+              +----------------------------------+
+                                                 |
+                                                 v
+                                        Terraform Plan
+                                                 |
+                                                 v
+                                            tfplan
+                                                 |
+                                                 v
+                                           tfplan.json
+                                                 |
+                                                 v
+                                       OPA / Conftest
+                                                 |
+                                                 v
+                                      +-------------------+
+                                      | COMPLIANCE GATE   |
+                                      +---------+---------+
+                                                |
+                                  +-------------+-------------+
+                                  |                           |
+                                PASS                         FAIL
+                                  |                           |
+                                  v                           v
+                                MERGE                       BLOCK
+                                  |
+                                  v
+                                main
+                                  |
+                                  v
+                    +---------------------------+
+                    | Terraform Deploy Workflow |
+                    +-------------+-------------+
+                                  |
+                                  v
+                         OIDC -> AWS STS
+                                  |
+                                  v
+                             IAM Role
+                                  |
+                                  v
+                       Temporary Credentials
+                                  |
+                                  v
+                       Terraform Init / Plan
+                                  |
+                                  v
+                         Terraform Apply
+                                  |
+                                  v
+                              AWS S3
+                                  |
+              +-------------------+-------------------+
+              |                   |                   |
+              v                   v                   v
+          Versioning          KMS Encryption    Public Access
+             ON                    ON               BLOCKED
 
----
+3. AWS Authentication Architecture
 
-# 5. GitHub → AWS Authentication Architecture
+The project intentionally avoids storing an AWS access key and secret
+key in GitHub.
 
-This project deliberately avoids storing long-lived AWS access keys in GitHub.
+Instead, GitHub Actions obtains a short-lived OIDC token and exchanges
+it with AWS STS.
 
-Instead, GitHub Actions uses OpenID Connect (OIDC).
+GitHub Actions Runner
+        |
+        | 1. Request OIDC token
+        v
+GitHub OIDC Provider
+token.actions.githubusercontent.com
+        |
+        | 2. Web identity token
+        v
+AWS STS
+sts:AssumeRoleWithWebIdentity
+        |
+        | 3. Validate IAM trust policy
+        v
+IAM Role
+GitHubActions-PlatformCompliance
+        |
+        | 4. Issue temporary credentials
+        v
+GitHub Actions Runner
+        |
+        | 5. Use temporary credentials
+        v
+AWS APIs
 
-```text
-                       GitHub Actions
-                             │
-                             │ 1. Request OIDC token
-                             ▼
-                  GitHub OIDC Provider
-                             │
-                             │ 2. JWT/OIDC token
-                             ▼
-                        AWS STS
-                             │
-                             │ 3. AssumeRoleWithWebIdentity
-                             ▼
-                      IAM Trust Policy
-                             │
-                             │ Validate claims
-                             │
-                             │ ✓ Issuer
-                             │ ✓ Audience
-                             │ ✓ Repository
-                             │ ✓ Repository ID
-                             │ ✓ Workflow context
-                             ▼
-                         IAM Role
-                             │
-                             ▼
-                  Temporary AWS Credentials
-                             │
-                             ▼
-                         Terraform
-                             │
-                             ▼
-                            AWS
-```
+Why OIDC?
 
----
+Traditional CI/CD authentication often uses:
 
-# 6. Why OIDC Instead of AWS Access Keys?
-
-A traditional approach would be:
-
-```text
-GitHub Actions
-      │
-      ▼
 AWS_ACCESS_KEY_ID
 AWS_SECRET_ACCESS_KEY
-      │
-      ▼
-AWS
-```
 
-This requires storing long-lived credentials.
+Those are long-lived credentials.
 
-The OIDC approach is:
+This project instead uses:
 
-```text
-GitHub Actions
-      │
-      ▼
-OIDC token
-      │
-      ▼
+GitHub OIDC token
+        |
+        v
 AWS STS
-      │
-      ▼
-Temporary credentials
-      │
-      ▼
-AWS
-```
+        |
+        v
+Temporary AWS credentials
 
 Advantages:
 
-* No long-lived AWS secret stored in GitHub
-* Credentials are temporary
-* IAM controls exactly who can assume the role
-* Trust can be restricted to a specific repository
-* Trust can be restricted to specific workflow contexts
-* Better security posture
-* Easier credential rotation because there are no permanent CI credentials to rotate
+No long-lived AWS secret stored in GitHub
 
----
+Credentials are short-lived
 
-# 7. AWS OIDC Identity Provider
+IAM trust policy can restrict which GitHub repository/workflow
+context can assume the role
 
-The AWS IAM OIDC provider was created using:
+Access can be revoked centrally through IAM
 
-```text
-Provider type:
-OpenID Connect
+Better alignment with production cloud security practices
 
-Provider URL:
-https://token.actions.githubusercontent.com
+4. IAM OIDC Trust Policy
 
-Audience:
-sts.amazonaws.com
-```
+The IAM role trusts GitHub's OIDC provider.
+
+The trust relationship used during the demo was based on the repository
+and pull-request identity supplied in the GitHub OIDC sub claim.
 
 Conceptually:
 
-```text
-AWS IAM
-   │
-   └── Identity Provider
-          │
-          └── token.actions.githubusercontent.com
-```
+GitHub repository
+      |
+      | OIDC token
+      v
+token.actions.githubusercontent.com
+      |
+      | subject + audience
+      v
+IAM Trust Policy
+      |
+      | authorized?
+      +---- NO ----> AssumeRole fails
+      |
+     YES
+      |
+      v
+AWS STS
 
-The OIDC provider tells AWS:
+The trust relationship included conditions equivalent to:
 
-> "GitHub is an identity provider whose tokens AWS can validate."
-
-The provider itself does NOT grant GitHub permissions.
-
-It establishes the identity federation relationship.
-
----
-
-# 8. IAM Role
-
-The project uses an IAM role similar to:
-
-```text
-GitHubActions-PlatformCompliance
-```
-
-The role has two important components:
-
-```text
-IAM Role
-   │
-   ├── Trust Policy
-   │
-   └── Permissions Policy
-```
-
-These solve two different problems.
-
-## Trust Policy
-
-Answers:
-
-> Who is allowed to assume this role?
-
-## Permissions Policy
-
-Answers:
-
-> What can the assumed role do?
-
-This distinction is extremely important.
-
----
-
-# 9. IAM Trust Policy
-
-The role's trust policy allows GitHub's OIDC identity to assume the role through:
-
-```text
-sts:AssumeRoleWithWebIdentity
-```
-
-Example structure:
-
-```json
 {
   "Version": "2012-10-17",
   "Statement": [
@@ -373,181 +250,799 @@ Example structure:
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": "<EXPECTED_GITHUB_SUBJECT>"
+          "token.actions.githubusercontent.com:sub": "<AUTHORIZED_GITHUB_SUBJECT>"
         }
       }
     }
   ]
 }
-```
 
-The important condition is:
+Important: The exact sub value must match the GitHub
+event/context being authorized. A trust policy that works for one
+GitHub event may not automatically authorize another event.
 
-```text
-aud = sts.amazonaws.com
-```
+5. IAM Permission Policy
 
-and the repository-specific:
+The IAM role also requires an identity-based permission policy.
 
-```text
-sub = expected GitHub identity
-```
+The trust policy answers:
 
----
+Who is allowed to assume this role?
 
-# 10. Important GitHub OIDC `sub` Discovery
+The permissions policy answers:
 
-During this project, the initial trust policy failed.
+What can the role do after it assumes the role?
 
-The error was:
+These are different controls.
 
-```text
-Not authorized to perform sts:AssumeRoleWithWebIdentity
-```
+Trust Policy
+     |
+     +--> Can GitHub assume the role?
+                  |
+                 YES
+                  |
+                  v
+        Permission Policy
+                  |
+                  +--> Can Terraform call S3?
 
-Instead of blindly changing permissions, the GitHub OIDC claims were inspected.
+For this demo, the role was intentionally given scoped S3 permissions
+for the demonstration bucket.
 
-The actual token contained a subject similar to:
+During Terraform refresh, we discovered that the AWS provider reads more
+S3 attributes than may initially be obvious from the Terraform
+configuration. The policy therefore had to include the corresponding
+read permissions.
 
-```text
-repo:paycenonoli@<OWNER_ID>/priest-aws-platform-compliance-demo@<REPOSITORY_ID>:pull_request
-```
+Examples encountered during troubleshooting included:
 
-This is important because GitHub has introduced immutable subject formats for newer repositories.
+s3:CreateBucket
+s3:GetBucketLocation
+s3:GetBucketAcl
+s3:ListBucket
+s3:GetBucketPolicy
+s3:GetBucketCORS
+s3:GetBucketVersioning
+s3:PutBucketVersioning
+s3:GetEncryptionConfiguration
+s3:PutEncryptionConfiguration
+s3:GetBucketPublicAccessBlock
+s3:PutBucketPublicAccessBlock
+s3:GetBucketTagging
+s3:PutBucketTagging
+s3:GetBucketWebsite
+s3:GetAccelerateConfiguration
+s3:GetBucketRequestPayment
+s3:GetBucketLogging
+s3:GetLifecycleConfiguration
+s3:GetReplicationConfiguration
+s3:GetObjectLockConfiguration
 
-Therefore:
+The exact policy should be reviewed and minimized further for a
+production implementation.
 
-> **Do not blindly assume that the OIDC `sub` will always look like the older `repo:OWNER/REPOSITORY:pull_request` format.**
+6. Terraform Architecture
 
-Always verify the actual claims when troubleshooting OIDC.
+The infrastructure is intentionally simple so the security/compliance
+workflow remains the focus.
 
----
+The Terraform configuration creates an S3 bucket with:
 
-# 11. Troubleshooting OIDC Authentication
+Versioning
 
-If GitHub reports:
+Server-side encryption using AWS KMS
 
-```text
-Could not assume role with OIDC:
-Not authorized to perform sts:AssumeRoleWithWebIdentity
-```
+Public-access blocking
 
-check these in order:
-
-```text
-1. Does the IAM OIDC provider exist?
-            ↓
-2. Is the provider URL correct?
-            ↓
-3. Is the audience sts.amazonaws.com?
-            ↓
-4. Does the GitHub workflow have:
-       id-token: write
-            ↓
-5. Is the role ARN correct?
-            ↓
-6. What is the actual OIDC `sub` claim?
-            ↓
-7. Does the IAM trust policy match the `sub`?
-            ↓
-8. Does the trust policy allow:
-       sts:AssumeRoleWithWebIdentity?
-```
-
-Do not immediately attach `AdministratorAccess`.
-
-Authentication and authorization are separate problems.
-
----
-
-# 12. GitHub Actions OIDC Configuration
-
-The workflow needs:
-
-```yaml
-permissions:
-  contents: read
-  id-token: write
-```
-
-The important permission is:
-
-```yaml
-id-token: write
-```
-
-This allows GitHub Actions to request an OIDC token.
-
-It does NOT itself grant AWS permissions.
-
----
-
-# 13. AWS Credentials Action
-
-The workflow uses:
-
-```yaml
-- name: Configure AWS credentials
-  uses: aws-actions/configure-aws-credentials@v6
-  with:
-    role-to-assume: arn:aws:iam::<ACCOUNT_ID>:role/GitHubActions-PlatformCompliance
-    aws-region: us-east-1
-```
-
-This action handles the OIDC → STS exchange.
+Resource tags
 
 Conceptually:
 
-```text
-GitHub OIDC token
-       │
-       ▼
-configure-aws-credentials
-       │
-       ▼
-AWS STS
-       │
-       ▼
-AssumeRoleWithWebIdentity
-       │
-       ▼
-Temporary credentials
-```
+Terraform
+   |
+   +---- aws_s3_bucket
+   |
+   +---- aws_s3_bucket_versioning
+   |
+   +---- aws_s3_bucket_server_side_encryption_configuration
+   |
+   +---- aws_s3_bucket_public_access_block
+   |
+   v
+AWS S3
 
----
+7. Terraform Remote State
 
-# 14. Verifying the AWS Identity
+The project uses an S3 bucket for Terraform remote state.
 
-The workflow uses:
+Example backend architecture:
 
-```yaml
-- name: Verify AWS identity
-  run: aws sts get-caller-identity
-```
+GitHub Actions
+      |
+      v
+Terraform
+      |
+      | terraform init
+      v
+S3 Backend
+      |
+      +--> bucket:
+      |    priest-platform-compliance-tfstate-<ACCOUNT_ID>
+      |
+      +--> key:
+           platform-compliance/terraform.tfstate
 
-A successful result should resemble:
+The state bucket was configured with:
 
-```json
+Versioning enabled
+
+Server-side encryption
+
+Restricted access
+
+Why remote state?
+
+Terraform state contains information Terraform needs to understand the
+infrastructure it manages.
+
+A production team should not depend on a developer's local:
+
+terraform.tfstate
+
+Instead:
+
+Developer / CI
+      |
+      v
+Terraform
+      |
+      v
+Centralized Remote State
+
+This allows different execution environments to work against the same
+state.
+
+8. Terraform Plan -> JSON -> OPA
+
+This is one of the most important concepts in the project.
+
+Terraform produces a plan:
+
+terraform plan -out=tfplan
+
+The binary plan is then converted to JSON:
+
+terraform show -json tfplan > tfplan.json
+
+OPA/Conftest evaluates the JSON representation.
+
+Terraform Configuration
+        |
+        v
+terraform plan
+        |
+        v
+     tfplan
+        |
+        v
+terraform show -json
+        |
+        v
+   tfplan.json
+        |
+        v
+Conftest / OPA
+        |
+        v
+terraform.rego
+        |
+        v
+Compliance Result
+
+Why not run OPA directly against .tf files?
+
+OPA is evaluating policy against structured data.
+
+The Terraform plan contains information about the infrastructure
+Terraform actually intends to create or change.
+
+That makes the plan a useful policy boundary:
+
+What the developer wrote
+          |
+          v
+What Terraform intends to do
+          |
+          v
+What policy allows
+
+9. Compliance Gate
+
+The compliance gate is the point where the pipeline decides whether the
+infrastructure change is acceptable.
+
+Terraform Plan
+      |
+      v
+   tfplan.json
+      |
+      v
+OPA / Conftest
+      |
+      +------------------+
+      |                  |
+      v                  v
+    PASS                FAIL
+      |                  |
+      v                  v
+  Allow merge       Block merge
+
+For example, the demo policy verifies that the S3 bucket contains the
+required Owner tag.
+
+A compliant plan:
+
+2 tests, 2 passed
+0 warnings
+0 failures
+
+A deliberately non-compliant change produced:
+
+FAIL - Resource aws_s3_bucket.compliance_demo
+must have an Owner tag
+
+That demonstrated that the compliance gate actually works rather than
+merely reporting success.
+
+10. Security Tools and Their Responsibilities
+
+The project uses several tools because they solve different problems.
+
+Tool                 Purpose
+
+Terraform fmt        Formatting consistency
+Terraform validate   Terraform configuration validation
+TFLint               Terraform linting and provider-specific checks
+Checkov              Infrastructure security/static analysis
+Terraform plan       Shows intended infrastructure changes
+OPA                  Policy-as-code engine
+Conftest             Runs OPA policies against configuration/data
+AWS IAM              Authorization
+AWS STS              Temporary credentials
+GitHub OIDC          Federated identity
+S3                   Terraform remote state and demo infrastructure
+
+11. GitHub Actions PR Workflow
+
+The compliance workflow runs against pull requests that modify relevant
+infrastructure or policy files.
+
+Conceptually:
+
+Pull Request
+     |
+     v
+Checkout
+     |
+     v
+Configure AWS Credentials
+     |
+     v
+Terraform Setup
+     |
+     +---- Terraform fmt
+     |
+     +---- Terraform validate
+     |
+     +---- TFLint
+     |
+     +---- Checkov
+     |
+     +---- Terraform plan
+     |
+     v
+tfplan.json
+     |
+     v
+OPA / Conftest
+     |
+     v
+Compliance Gate
+
+Important ordering
+
+OPA/Conftest comes after Terraform plan because the policy is
+evaluating the planned infrastructure.
+
+That means:
+
+Terraform configuration
+        |
+        v
+Terraform plan
+        |
+        v
+Planned infrastructure
+        |
+        v
+OPA/Conftest
+
+This is different from tools such as TFLint and Checkov, which can
+inspect the Terraform configuration directly.
+
+12. Deployment Workflow
+
+After the pull request passes and is merged, the deployment workflow
+runs.
+
+Merged Pull Request
+        |
+        v
+      main
+        |
+        v
+Terraform Deploy
+        |
+        +--> Checkout
+        |
+        +--> Configure AWS Credentials
+        |
+        +--> Verify AWS identity
+        |
+        +--> Terraform setup
+        |
+        +--> Terraform init
+        |
+        +--> Terraform plan
+        |
+        +--> Terraform apply
+        |
+        v
+      AWS
+
+The deployment uses the same OIDC-based AWS authentication model rather
+than storing long-lived AWS credentials.
+
+13. Actual AWS Result
+
+The deployment was independently verified from the AWS CLI.
+
+Bucket exists
+
+aws s3api head-bucket \
+  --bucket priest-platform-compliance-demo-417521971848
+
+Result:
+
+BucketArn: arn:aws:s3:::priest-platform-compliance-demo-417521971848
+BucketRegion: us-east-1
+
+Versioning
+
+aws s3api get-bucket-versioning \
+  --bucket priest-platform-compliance-demo-417521971848
+
+Result:
+
 {
-  "Account": "<ACCOUNT_ID>",
-  "Arn": "arn:aws:sts::<ACCOUNT_ID>:assumed-role/GitHubActions-PlatformCompliance/..."
+  "Status": "Enabled"
 }
-```
 
-This proves the workflow is using an assumed role rather than a long-lived IAM user.
+Public access protection
 
----
+aws s3api get-public-access-block \
+  --bucket priest-platform-compliance-demo-417521971848
 
-# 15. Project Structure
+Result:
 
-The project is organized approximately as follows:
+{
+  "PublicAccessBlockConfiguration": {
+    "BlockPublicAcls": true,
+    "IgnorePublicAcls": true,
+    "BlockPublicPolicy": true,
+    "RestrictPublicBuckets": true
+  }
+}
 
-```text
+Encryption
+
+aws s3api get-bucket-encryption \
+  --bucket priest-platform-compliance-demo-417521971848
+
+Result:
+
+SSEAlgorithm = aws:kms
+
+Therefore the infrastructure was not merely planned; the actual AWS
+resource was verified.
+
+14. Challenges Encountered and Resolutions
+
+This section documents the real troubleshooting performed while building
+the demo.
+
+These challenges are intentionally included because they demonstrate
+practical cloud/DevOps troubleshooting rather than a "happy path"
+tutorial.
+
+Challenge 1: GitHub OIDC Trust Policy Failure
+
+Symptom
+
+The workflow failed at:
+
+Configure AWS credentials
+
+with:
+
+Could not assume role with OIDC:
+Not authorized to perform sts:AssumeRoleWithWebIdentity
+
+The workflow retried multiple times.
+
+Cause
+
+AWS STS was receiving the GitHub OIDC token, but the IAM role's trust
+policy did not authorize that token's identity.
+
+The important distinction:
+
+OIDC provider exists
+        !=
+IAM role trusts the GitHub identity
+
+Investigation
+
+The workflow inspected the OIDC claims.
+
+Important claims included:
+
+iss
+aud
+sub
+repository
+event_name
+ref
+head_ref
+base_ref
+
+The sub claim was particularly important because the IAM trust policy
+used it to restrict which GitHub identity could assume the role.
+
+Resolution
+
+The IAM trust relationship was corrected so that the GitHub OIDC
+identity used by the workflow was authorized.
+
+After the correction:
+
+Configure AWS credentials     PASS
+Verify AWS identity           PASS
+
+Lesson
+
+When GitHub Actions cannot assume an AWS role, check:
+
+GitHub OIDC provider exists in AWS
+
+IAM trust policy references the correct provider
+
+aud matches sts.amazonaws.com
+
+sub matches the actual GitHub OIDC subject
+
+The workflow has:
+
+permissions:
+  id-token: write
+  contents: read
+
+15. Challenge 2: Missing S3 Create Permission
+
+After OIDC authentication was fixed, the workflow reached Terraform but
+failed during deployment.
+
+Error:
+
+not authorized to perform:
+s3:CreateBucket
+
+Cause
+
+The IAM role was successfully assumed, but the role did not have
+permission to create the S3 bucket.
+
+This demonstrated an important AWS security concept:
+
+Authentication / Assume Role
+            |
+            v
+        SUCCESS
+            |
+            v
+Authorization
+            |
+            v
+       s3:CreateBucket
+            |
+            v
+          DENIED
+
+OIDC authentication does not automatically grant AWS permissions.
+
+Resolution
+
+The required S3 permissions were added to the role's identity-based
+policy.
+
+16. Challenge 3: Terraform Refresh Required More S3 Permissions
+
+After adding s3:CreateBucket, Terraform still failed.
+
+The errors progressively exposed additional permissions.
+
+Examples included:
+
+s3:GetBucketPolicy
+s3:GetBucketCORS
+s3:GetBucketWebsite
+s3:GetAccelerateConfiguration
+s3:GetBucketRequestPayment
+
+Later, additional Terraform provider refresh operations required:
+
+s3:GetBucketLogging
+s3:GetLifecycleConfiguration
+s3:GetReplicationConfiguration
+s3:GetObjectLockConfiguration
+
+Why did this happen?
+
+Terraform does not simply execute:
+
+CREATE S3 BUCKET
+
+and stop.
+
+During refresh and planning, the AWS provider reads the existing
+resource and its attributes to determine the current state.
+
+Conceptually:
+
+Terraform Plan
+      |
+      v
+Refresh AWS resource
+      |
+      +--> GetBucketPolicy
+      +--> GetBucketCORS
+      +--> GetBucketWebsite
+      +--> GetBucketLogging
+      +--> GetLifecycleConfiguration
+      +--> ...
+      |
+      v
+Compare AWS state
+with Terraform configuration
+      |
+      v
+Generate plan
+
+Therefore, an IAM role used by Terraform needs enough read access to
+inspect the resources it manages.
+
+Resolution
+
+The missing read permissions were added to the IAM policy.
+
+The workflow eventually reached:
+
+Terraform Plan       PASS
+Checkov               PASS
+OPA / Conftest        PASS
+Terraform Apply       PASS
+
+Lesson
+
+A Terraform IAM policy must account for both:
+
+Actions needed to create/update/delete resources
+
+Actions needed to read/refresh those resources during Terraform
+planning
+
+For production, the final policy should be deliberately reviewed and
+minimized rather than blindly adding every permission requested by an
+error message.
+
+17. Challenge 4: BucketAlreadyExists
+
+During testing, Terraform attempted to create:
+
+priest-platform-compliance-demo-417521971848
+
+but AWS returned:
+
+BucketAlreadyExists
+
+What happened?
+
+The bucket had already been created during an earlier deployment
+attempt.
+
+Terraform did not yet have that bucket represented correctly in its
+current state, so Terraform believed it needed to create it.
+
+Resolution
+
+The existing bucket was imported:
+
+terraform import aws_s3_bucket.compliance_demo \
+  priest-platform-compliance-demo-417521971848
+
+Then:
+
+terraform state list
+
+showed:
+
+aws_s3_bucket.compliance_demo
+
+This brought the existing AWS resource under Terraform management.
+
+18. Challenge 5: Understanding Remote State
+
+The project initially required clarification around the difference
+between:
+
+Terraform configuration
+Terraform state
+AWS infrastructure
+
+These are not the same thing.
+
+Configuration
+
+main.tf
+variables.tf
+outputs.tf
+
+describes the desired infrastructure.
+
+State
+
+Terraform state records what Terraform knows about the infrastructure it
+manages.
+
+AWS
+
+AWS contains the actual resources.
+
+The relationship is:
+
+Terraform Configuration
+          |
+          | desired state
+          v
+      Terraform
+          |
+          | state
+          v
+   Remote S3 Backend
+          |
+          |
+          v
+      AWS Resources
+
+The remote state was verified in S3 at:
+
+platform-compliance/terraform.tfstate
+
+19. Challenge 6: Terraform Backend Initialization
+
+After introducing the S3 backend, Terraform reported:
+
+Backend initialization required
+
+The solution was:
+
+terraform init
+
+When the backend configuration changes, Terraform may require:
+
+terraform init -reconfigure
+
+or, when appropriate for an actual state migration:
+
+terraform init -migrate-state
+
+Important distinction
+
+-reconfigure tells Terraform to use the new backend configuration
+without attempting to migrate the existing state.
+
+-migrate-state is used when state needs to be moved from one backend
+configuration to another.
+
+Always understand which operation is appropriate before using either
+option in a production environment.
+
+20. Compliance Failure Demonstration
+
+The project intentionally included a failing compliance test.
+
+The policy required the S3 bucket to have an Owner tag.
+
+A non-compliant Terraform plan resulted in:
+
+FAIL - tfplan.json
+Resource aws_s3_bucket.compliance_demo
+must have an Owner tag
+
+The workflow then failed:
+
+2 tests, 1 passed, 1 failure
+
+After restoring the required tag:
+
+2 tests, 2 passed
+0 warnings
+0 failures
+
+This proves the compliance gate is functional.
+
+21. Why This Is More Than a Terraform Project
+
+The actual project demonstrates several layers of DevOps engineering.
+
+                    DevOps Platform
+                          |
+        +-----------------+-----------------+
+        |                 |                 |
+        v                 v                 v
+   Infrastructure      Security          Automation
+        |                 |                 |
+    Terraform          IAM/OIDC         GitHub Actions
+        |              Checkov           CI/CD
+        |              OPA
+        |              Conftest
+        v
+       AWS
+
+It also demonstrates the separation of concerns:
+
+Terraform
+    |
+    +--> Infrastructure provisioning
+
+TFLint
+    |
+    +--> Terraform quality/linting
+
+Checkov
+    |
+    +--> Security/static analysis
+
+OPA/Conftest
+    |
+    +--> Organizational compliance policy
+
+IAM/OIDC
+    |
+    +--> Secure cloud authentication/authorization
+
+GitHub Actions
+    |
+    +--> CI/CD orchestration
+
+22. Suggested Repository Structure
+
 priest-aws-platform-compliance-demo/
 │
 ├── .github/
 │   └── workflows/
-│       └── terraform-pr.yml
+│       ├── terraform-pr.yml
+│       └── terraform-deploy.yml
 │
 ├── policies/
 │   └── terraform.rego
@@ -560,1328 +1055,502 @@ priest-aws-platform-compliance-demo/
 │   ├── variables.tf
 │   ├── outputs.tf
 │   ├── versions.tf
-│   ├── s3-security.tf
-│   ├── .tflint.hcl
-│   └── ...
+│   ├── backend.tf
+│   ├── terraform.tfvars
+│   └── .terraform.lock.hcl
 │
 ├── .checkov.yaml
-├── .gitignore
-├── Jenkinsfile
-└── README.md
-```
+├── .tflint.hcl
+├── Jenkinsfile                 # planned Jenkins phase
+├── README.md
+└── LICENSE
 
----
+Do not commit:
 
-# 16. Terraform
-
-The Terraform configuration creates a demonstration S3 bucket.
-
-Example:
-
-```hcl
-resource "aws_s3_bucket" "compliance_demo" {
-  bucket = "..."
-
-  tags = {
-    Name        = "platform-compliance-demo"
-    Environment = var.environment
-    Owner       = "Platform-Team"
-  }
-}
-```
-
-Security configuration includes controls such as:
-
-* Public access blocking
-* Encryption
-* Versioning
-* Required tags
-* Other security/compliance controls
-
-The purpose of the bucket is not the infrastructure itself.
-
-The bucket is simply a convenient resource against which the compliance controls can be demonstrated.
-
----
-
-# 17. Terraform Workflow
-
-Terraform's role in the pipeline is:
-
-```text
-Terraform configuration
-        │
-        ▼
-terraform fmt
-        │
-        ▼
-terraform validate
-        │
-        ▼
-terraform init
-        │
-        ▼
-terraform plan
-        │
-        ▼
+terraform.tfstate
+terraform.tfstate.*
+.terraform/
 tfplan
-        │
-        ▼
-terraform show -json
-        │
-        ▼
 tfplan.json
-```
+.env
+AWS access keys
+AWS secret keys
 
-The plan is important because it represents the infrastructure Terraform actually intends to create or modify.
+23. Useful Local Commands
 
----
+Terraform
 
-# 18. Terraform Plan
+Initialize:
 
-The workflow generates a plan using:
-
-```bash
-terraform plan -out=tfplan
-```
-
-Then converts it to JSON:
-
-```bash
-terraform show -json tfplan > tfplan.json
-```
-
-This gives OPA a structured representation of the proposed infrastructure.
-
----
-
-# 19. Why OPA Runs After Terraform Plan
-
-OPA can evaluate source configuration, but this project deliberately evaluates the **Terraform plan**.
-
-The difference is:
-
-```text
-Terraform source
-      │
-      ▼
-Terraform Plan
-      │
-      │ Resolves:
-      │
-      ├── Variables
-      ├── Expressions
-      ├── Modules
-      ├── Conditionals
-      ├── for_each
-      └── Resource arguments
-      │
-      ▼
-Actual proposed infrastructure
-      │
-      ▼
-OPA
-```
-
-Therefore, plan-based policy evaluation asks:
-
-> "Does the infrastructure Terraform actually intends to provision comply with organizational policy?"
-
----
-
-# 20. TFLint
-
-TFLint is primarily a Terraform linter.
-
-Run locally:
-
-```bash
-tflint --version
-```
-
-Initialize plugins:
-
-```bash
-tflint --init
-```
-
-Run:
-
-```bash
-tflint
-```
-
-TFLint helps identify:
-
-* Terraform configuration problems
-* Provider-specific issues
-* Deprecated or problematic patterns
-* Terraform best-practice violations
-
-Think:
-
-```text
-TFLint =
-"Is this Terraform written correctly?"
-```
-
----
-
-# 21. Checkov
-
-Checkov scans Infrastructure as Code for security/compliance problems.
-
-Run:
-
-```bash
-checkov -d .
-```
-
-The project intentionally demonstrated Checkov failures.
-
-For example, Checkov identified controls related to:
-
-```text
-S3 public access
-S3 encryption
-S3 versioning
-S3 logging
-S3 lifecycle
-S3 replication
-```
-
-Checkov represents:
-
-```text
-Known security best practices
-```
-
-Think:
-
-```text
-Checkov =
-"Does this infrastructure violate known security controls?"
-```
-
----
-
-# 22. `.checkov.yaml`
-
-The repository contains:
-
-```text
-.checkov.yaml
-```
-
-This file can be used to configure Checkov behavior, such as:
-
-* Frameworks
-* Skips
-* Configuration
-* Output behavior
-* Organization-specific scanning requirements
-
-Avoid using skip rules simply to make a pipeline green.
-
-A skipped security control should have a documented business/technical reason.
-
----
-
-# 23. OPA and Conftest
-
-OPA stands for:
-
-```text
-Open Policy Agent
-```
-
-OPA is a general-purpose policy engine.
-
-Conftest provides a convenient way to use OPA policies to test configuration/data.
-
-The relationship is:
-
-```text
-             OPA
-              │
-              │ Policy Engine
-              ▼
-          Rego Policy
-              │
-              ▼
-          Conftest
-              │
-              ▼
-     Test configuration/data
-```
-
----
-
-# 24. Rego Policy
-
-The project's policy is stored under:
-
-```text
-policies/
-```
-
-Example policy concept:
-
-```text
-Every resource must have:
-
-Environment
-Owner
-```
-
-This is an organizational policy.
-
-Unlike Checkov's AWS security controls, this is a rule created specifically for the organization.
-
-Think:
-
-```text
-Checkov
-   ↓
-Security best practices
-
-OPA
-   ↓
-Organization-specific governance
-```
-
----
-
-# 25. Running Conftest Locally
-
-Generate a Terraform plan:
-
-```bash
-terraform plan -out=tfplan
-```
-
-Convert it to JSON:
-
-```bash
-terraform show -json tfplan > tfplan.json
-```
-
-Run Conftest:
-
-```bash
-conftest test tfplan.json \
-  --policy ../policies \
-  --namespace terraform
-```
-
-A passing result:
-
-```text
-2 tests, 2 passed, 0 warnings, 0 failures, 0 exceptions
-```
-
-A failing result might look like:
-
-```text
-FAIL - tfplan.json - terraform -
-Resource aws_s3_bucket.compliance_demo must have an Owner tag
-
-2 tests, 1 passed, 0 warnings, 1 failure
-```
-
----
-
-# 26. The Compliance Gate
-
-The GitHub Actions step is:
-
-```yaml
-- name: Compliance Gate
-  working-directory: terraform
-  run: |
-    conftest test tfplan.json \
-      --policy ../policies \
-      --namespace terraform
-```
-
-The important behavior is the exit code.
-
-```text
-Policy passes
-     ↓
-exit code 0
-     ↓
-GitHub Actions step passes
-```
-
-Whereas:
-
-```text
-Policy fails
-     ↓
-exit code 1
-     ↓
-GitHub Actions step fails
-     ↓
-Job fails
-     ↓
-PR check fails
-     ↓
-Merge blocked
-```
-
-Therefore, the Conftest step is the actual **compliance gate**.
-
-There does not need to be a separate magical GitHub feature called "Compliance Gate."
-
----
-
-# 27. Compliance Gate Architecture
-
-```text
-Terraform Plan
-      │
-      ▼
-tfplan.json
-      │
-      ▼
-OPA / Conftest
-      │
-      ▼
-COMPLIANCE GATE
-      │
-      ├───────────────┐
-      │               │
-      ▼               ▼
-    PASS             FAIL
-      │               │
-      ▼               ▼
-exit 0             exit 1
-      │               │
-      ▼               ▼
-GitHub job        GitHub job
-passes             fails
-      │               │
-      ▼               ▼
-PR can merge      PR blocked
-```
-
----
-
-# 28. Intentional Compliance Failure Demonstration
-
-One of the most important demonstrations in this project was intentionally breaking the compliance policy.
-
-The policy required an `Owner` tag.
-
-The compliant Terraform contained:
-
-```hcl
-tags = {
-  Name        = "platform-compliance-demo"
-  Environment = var.environment
-  Owner       = "Platform-Team"
-}
-```
-
-The test removed the Owner tag:
-
-```hcl
-tags = {
-  Name        = "platform-compliance-demo"
-  Environment = var.environment
-  # Owner     = "Platform-Team"
-}
-```
-
-The pipeline then reported:
-
-```text
-Resource aws_s3_bucket.compliance_demo must have an Owner tag
-```
-
-and:
-
-```text
-Process completed with exit code 1
-```
-
-The PR therefore failed the compliance check.
-
----
-
-# 29. Restoring Compliance
-
-The tag was restored:
-
-```hcl
-Owner = "Platform-Team"
-```
-
-The pipeline then reported:
-
-```text
-2 tests, 2 passed, 0 warnings, 0 failures
-```
-
-The GitHub Actions job passed.
-
-This demonstrated both sides of the control:
-
-```text
-Non-compliant
-     ↓
-OPA failure
-     ↓
-Pipeline failure
-     ↓
-PR blocked
-
-
-Compliant
-     ↓
-OPA success
-     ↓
-Pipeline success
-     ↓
-PR can merge
-```
-
----
-
-# 30. Complete CI/CD Flow
-
-The final workflow is:
-
-```text
-Developer
-    │
-    │ git push
-    ▼
-Feature Branch
-    │
-    ▼
-Pull Request
-    │
-    ▼
-GitHub Actions
-    │
-    ├──────────────────────────────────┐
-    │                                  │
-    ▼                                  ▼
-GitHub OIDC                        CI Checks
-    │                                  │
-    ▼                                  ├── Terraform fmt
-AWS STS                               ├── Terraform validate
-    │                                  ├── TFLint
-    ▼                                  ├── Checkov
-IAM Role                              └── Terraform Plan
-    │                                         │
-    ▼                                         ▼
-Temporary credentials                    tfplan.json
-    │                                         │
-    └──────────────────────┬──────────────────┘
-                           │
-                           ▼
-                    OPA / Conftest
-                           │
-                           ▼
-                    COMPLIANCE GATE
-                       /        \
-                    PASS        FAIL
-                     │            │
-                     ▼            ▼
-                   Merge        Block
-                     │
-                     ▼
-              Deployment Pipeline
-```
-
----
-
-# 31. Pull Request Lifecycle
-
-The intended development workflow is:
-
-```bash
-git checkout -b feature/my-change
-```
-
-Make changes:
-
-```bash
-vim terraform/main.tf
-```
-
-Format:
-
-```bash
-terraform fmt
-```
-
-Validate:
-
-```bash
-terraform validate
-```
-
-Run TFLint:
-
-```bash
-tflint
-```
-
-Run Checkov:
-
-```bash
-checkov -d .
-```
-
-Generate plan:
-
-```bash
-terraform plan -out=tfplan
-```
-
-Convert plan:
-
-```bash
-terraform show -json tfplan > tfplan.json
-```
-
-Run policy:
-
-```bash
-conftest test tfplan.json \
-  --policy ../policies \
-  --namespace terraform
-```
-
-Commit:
-
-```bash
-git add .
-git commit -m "Describe the change"
-```
-
-Push:
-
-```bash
-git push -u origin feature/my-change
-```
-
-Create a Pull Request.
-
-GitHub Actions automatically runs the compliance pipeline.
-
----
-
-# 32. Existing Pull Requests and New Commits
-
-A Pull Request is associated with a branch.
-
-Once a PR exists:
-
-```text
-feature/compliance
-        │
-        ▼
-       PR
-```
-
-You do NOT need to create another PR every time you push.
-
-For example:
-
-```bash
-git commit -m "Fix compliance policy"
-git push
-```
-
-updates the existing PR.
-
-GitHub Actions runs again.
-
-Only create a new PR when creating a new branch/change stream.
-
----
-
-# 33. Merge Behavior
-
-The PR should only be merged when the required checks pass.
-
-Conceptually:
-
-```text
-PR
- │
- ▼
-GitHub Actions
- │
- ├── Terraform checks
- ├── TFLint
- ├── Checkov
- └── OPA Compliance Gate
-           │
-           ▼
-        PASS?
-       /      \
-     YES       NO
-      │         │
-      ▼         ▼
-   Merge      Block
-```
-
-In a production repository, configure GitHub branch protection / rulesets so required CI checks must pass before merging.
-
----
-
-# 34. Why Terraform Apply Is Not in the PR Pipeline
-
-This project intentionally does NOT perform:
-
-```bash
-terraform apply
-```
-
-from the Pull Request compliance workflow.
-
-The PR pipeline's purpose is:
-
-```text
-Validate
-Scan
-Plan
-Evaluate
-Approve/Reject
-```
-
-A separate deployment workflow can perform:
-
-```text
-main branch
-     │
-     ▼
-Terraform Plan
-     │
-     ▼
-Approval
-     │
-     ▼
-Terraform Apply
-```
-
-This separation reduces deployment risk.
-
----
-
-# 35. Recommended Production Architecture
-
-A mature implementation could separate the roles:
-
-```text
-                         AWS
-                          │
-              ┌───────────┴───────────┐
-              │                       │
-              ▼                       ▼
-       PR Validation Role       Deployment Role
-              │                       │
-              ▼                       ▼
-       Plan / Read access       Apply permissions
-              │                       │
-              ▼                       ▼
-       Pull Requests              main/prod
-```
-
-The PR role should have only the permissions necessary for validation/plan.
-
-The deployment role should have the permissions necessary to perform deployment.
-
-This follows the principle of:
-
-> **Least privilege**
-
----
-
-# 36. Security Principles Demonstrated
-
-This project demonstrates several important Platform Engineering security principles.
-
-## No Long-Lived CI Credentials
-
-GitHub uses OIDC instead of stored AWS access keys.
-
-## Least Privilege
-
-The CI role should receive only the permissions required for its job.
-
-## Shift-Left Security
-
-Security checks occur during the Pull Request.
-
-## Policy-as-Code
-
-Organizational requirements are expressed as code.
-
-## Automated Enforcement
-
-Policy violations cause the pipeline to fail.
-
-## Separation of Duties
-
-PR validation and deployment can use separate IAM roles/workflows.
-
-## Traceability
-
-Git commits, Pull Requests, CI results, Terraform plans, and policy results provide an audit trail.
-
----
-
-# 37. Authentication vs Authorization
-
-One of the most important concepts demonstrated here:
-
-```text
-Authentication
-     │
-     ▼
-"Who are you?"
-```
-
-OIDC + STS + IAM trust policy establishes the identity relationship.
-
-Then:
-
-```text
-Authorization
-     │
-     ▼
-"What are you allowed to do?"
-```
-
-IAM permissions determine what the assumed role can do.
-
-Therefore:
-
-```text
-GitHub OIDC
-     ↓
-Authentication / Federation
-     ↓
-Assume IAM Role
-     ↓
-Temporary Credentials
-     ↓
-Authorization through IAM permissions
-```
-
-A role can be successfully assumed but still fail because it lacks permissions.
-
----
-
-# 38. Troubleshooting Guide
-
-## OIDC: `Not authorized to perform sts:AssumeRoleWithWebIdentity`
-
-Check:
-
-```text
-OIDC provider
-Trust policy
-aud claim
-sub claim
-id-token: write
-Role ARN
-```
-
-Do not immediately add broad IAM permissions.
-
----
-
-## Terraform AccessDenied
-
-If:
-
-```text
-Configure AWS credentials ✓
-```
-
-but:
-
-```text
-Terraform Plan ✗
-```
-
-then authentication probably succeeded but the IAM role lacks required AWS permissions.
-
-Think:
-
-```text
-Authentication ✓
-Authorization ✗
-```
-
----
-
-## Checkov Fails
-
-Read the failed control.
-
-Example:
-
-```text
-CKV_AWS_21
-S3 versioning
-```
-
-Fix the infrastructure or document an approved exception.
-
-Do not blindly suppress the check.
-
----
-
-## OPA/Conftest Fails
-
-Example:
-
-```text
-Resource ... must have an Owner tag
-```
-
-Inspect:
-
-```text
-policies/terraform.rego
-```
-
-and the Terraform plan:
-
-```text
-terraform/tfplan.json
-```
-
-Determine whether:
-
-1. The Terraform configuration violates the policy
-2. The policy is incorrect
-3. The policy needs an approved exception
-
----
-
-# 39. Useful Local Commands
-
-Check versions:
-
-```bash
-terraform version
-git --version
-docker --version
-aws --version
-kubectl version --client
-python3 --version
-tflint --version
-checkov --version
-conftest --version
-```
-
-Check AWS identity:
-
-```bash
-aws sts get-caller-identity
-```
-
-Initialize Terraform:
-
-```bash
-cd terraform
 terraform init
-```
 
 Format:
 
-```bash
-terraform fmt
-```
+terraform fmt -recursive
 
 Validate:
 
-```bash
 terraform validate
-```
 
 Plan:
 
-```bash
+terraform plan
+
+Save a plan:
+
 terraform plan -out=tfplan
-```
 
 Convert plan to JSON:
 
-```bash
 terraform show -json tfplan > tfplan.json
-```
 
-TFLint:
+Apply:
 
-```bash
-tflint --init
-tflint
-```
+terraform apply tfplan
 
-Checkov:
+Inspect state:
 
-```bash
-checkov -d .
-```
+terraform state list
 
-Conftest:
+Pull remote state:
 
-```bash
-conftest test tfplan.json \
-  --policy ../policies \
-  --namespace terraform
-```
+terraform state pull
 
----
+Import an existing resource:
 
-# 40. Important Files
+terraform import aws_s3_bucket.compliance_demo \
+  priest-platform-compliance-demo-417521971848
 
-## `.github/workflows/terraform-pr.yml`
+24. AWS Verification Commands
 
-Defines the GitHub Actions CI/CD workflow.
+Check the bucket:
 
-Responsibilities include:
+aws s3api head-bucket \
+  --bucket priest-platform-compliance-demo-417521971848
 
-* Checkout
-* AWS OIDC authentication
-* Terraform setup
-* Terraform validation
-* TFLint
-* Checkov
-* Terraform Plan
-* Plan JSON generation
-* Conftest compliance gate
+Check versioning:
 
----
+aws s3api get-bucket-versioning \
+  --bucket priest-platform-compliance-demo-417521971848
 
-## `terraform/`
+Check public access:
 
-Contains the Infrastructure as Code.
+aws s3api get-public-access-block \
+  --bucket priest-platform-compliance-demo-417521971848
 
----
+Check encryption:
 
-## `policies/terraform.rego`
+aws s3api get-bucket-encryption \
+  --bucket priest-platform-compliance-demo-417521971848
 
-Contains organization-specific OPA policies.
+Check the Terraform state object:
 
----
+aws s3api list-objects-v2 \
+  --bucket priest-platform-compliance-tfstate-417521971848 \
+  --prefix platform-compliance/
 
-## `.checkov.yaml`
+25. Testing the Compliance Gate
 
-Contains Checkov configuration.
+A useful demonstration is to intentionally introduce a policy violation.
 
----
-
-## `Jenkinsfile`
-
-Can be used as a reference for implementing the same concepts with Jenkins.
-
-The concepts remain the same:
-
-```text
-CI/CD
-  ↓
-AWS Authentication
-  ↓
-Terraform
-  ↓
-Security Scanning
-  ↓
-Policy Enforcement
-```
-
-The CI platform changes, but the architecture does not fundamentally change.
-
----
-
-# 41. Jenkins Equivalent
-
-The same design can be implemented with Jenkins.
-
-Conceptually:
-
-```text
-Jenkins
-   │
-   ▼
-AWS Authentication
-   │
-   ▼
-Terraform
-   │
-   ├── TFLint
-   ├── Checkov
-   ├── Terraform Plan
-   └── OPA/Conftest
-            │
-            ▼
-      Compliance Gate
-```
-
-For Jenkins, authentication options may include:
-
-* EC2 Instance Profile
-* IAM Roles for Service Accounts
-* OIDC federation
-* Jenkins/AWS integrations
-* Short-lived credentials
-
-The authentication mechanism changes depending on where Jenkins runs.
-
----
-
-# 42. Interview Questions This Project Helps Answer
-
-This project provides hands-on examples for questions such as:
-
-### AWS / IAM
-
-* How does GitHub Actions authenticate to AWS?
-* What is OIDC?
-* What is AWS STS?
-* What is `AssumeRoleWithWebIdentity`?
-* What is the difference between a trust policy and permissions policy?
-* Why use temporary credentials?
-* How do you implement least privilege?
-* How would you troubleshoot an STS authorization failure?
-
-### Terraform
-
-* How do you validate Terraform?
-* What does `terraform plan` do?
-* Why convert a plan to JSON?
-* How do you enforce Terraform standards?
-* How do you manage Terraform in CI/CD?
-
-### DevSecOps
-
-* How do you shift security left?
-* How do you scan Infrastructure as Code?
-* How do you enforce compliance before deployment?
-* How do you prevent non-compliant infrastructure from reaching production?
-
-### Policy-as-Code
-
-* What is OPA?
-* What is Rego?
-* What is Conftest?
-* Why use OPA instead of only Checkov?
-* What is the difference between security scanning and organizational policy enforcement?
-
-### CI/CD
-
-* How do you implement a compliance gate?
-* How do you block a Pull Request?
-* What happens when a CI step returns exit code 1?
-* Why should Terraform Apply be separated from PR validation?
-
----
-
-# 43. Key Interview Explanation
-
-A concise explanation of this project is:
-
-> "I built a PR-based Terraform compliance pipeline using GitHub Actions. GitHub authenticates to AWS using OIDC rather than long-lived AWS credentials. AWS STS validates the GitHub OIDC token against an IAM role trust policy and issues temporary credentials. The pipeline then runs Terraform validation, TFLint, Checkov, and Terraform Plan. The Terraform plan is converted to JSON and evaluated with OPA/Conftest against organization-specific policies. A policy violation returns a non-zero exit code, causing the compliance gate to fail and preventing the Pull Request from being merged."
-
----
-
-# 44. What This Demonstrates as a Platform Engineer
-
-This project demonstrates the ability to:
-
-```text
-Design
-   ↓
-Automate
-   ↓
-Secure
-   ↓
-Govern
-   ↓
-Enforce
-   ↓
-Troubleshoot
-```
-
-Rather than manually checking infrastructure, the Platform Engineering team provides a reusable platform capability where developers receive automated feedback through the normal Pull Request workflow.
-
-This is an example of treating **security and compliance as platform capabilities** rather than manual operational tasks.
-
----
-
-# 45. Future Enhancements
-
-Possible production extensions include:
-
-* GitHub branch protection/rulesets
-* Separate PR and deployment IAM roles
-* Terraform remote state in S3
-* DynamoDB state locking where applicable
-* Multi-account AWS architecture
-* AWS Organizations / SCP integration
-* AWS Config
-* Security Hub
-* CloudTrail
-* Centralized compliance reporting
-* Terraform modules
-* Reusable GitHub Actions workflows
-* Reusable OPA policies
-* Policy exceptions with approval
-* Container image scanning with Trivy
-* Kubernetes admission control with OPA Gatekeeper/Kyverno
-* Kubernetes deployment compliance
-* Argo CD integration
-* Jenkins implementation
-* Multi-cloud policy enforcement
-
----
-
-# 46. Final Architecture
-
-```text
-                              Developer
-                                  │
-                                  │
-                                  ▼
-                         ┌─────────────────┐
-                         │ GitHub Pull     │
-                         │ Request         │
-                         └────────┬────────┘
-                                  │
-                                  ▼
-                       ┌──────────────────────┐
-                       │   GitHub Actions     │
-                       └──────────┬───────────┘
-                                  │
-             ┌────────────────────┼────────────────────┐
-             │                    │                    │
-             ▼                    ▼                    ▼
-       GitHub OIDC           Terraform             Security
-             │                    │                    │
-             ▼                    │             ┌──────┴──────┐
-          AWS STS                 │             │             │
-             │                    │           TFLint       Checkov
-             ▼                    │             │             │
-          IAM Role                │             └──────┬──────┘
-             │                    │                    │
-             ▼                    ▼                    │
-     Temporary Credentials   Terraform Plan            │
-             │                    │                    │
-             │                    ▼                    │
-             │                tfplan.json              │
-             │                    │                    │
-             │                    ▼                    │
-             │              OPA / Conftest ◄──────────┘
-             │                    │
-             │                    ▼
-             │             COMPLIANCE GATE
-             │                /        \
-             │              PASS        FAIL
-             │               │            │
-             │               ▼            ▼
-             │             MERGE        BLOCK
-             │
-             └──────────────► AWS
-```
-
----
-
-# 47. Final Takeaway
-
-The central principle of this project is:
-
-> **Infrastructure should be automatically validated, secured, and governed before it is allowed to become infrastructure.**
-
-The pipeline provides:
-
-```text
-GitHub
-  ↓
-OIDC Authentication
-  ↓
-AWS STS
-  ↓
-Temporary IAM Credentials
-  ↓
-Terraform
-  ↓
-Security Scanning
-  ↓
-Terraform Plan
-  ↓
-Policy-as-Code
-  ↓
-Compliance Gate
-  ↓
-Merge or Block
-```
-
-This creates a repeatable, automated and auditable control for Infrastructure as Code.
-
----
-
-## Demo Status
-
-**Completed**
-
-* [x] GitHub repository
-* [x] Terraform infrastructure
-* [x] TFLint
-* [x] Checkov
-* [x] OPA/Conftest
-* [x] GitHub Actions
-* [x] AWS OIDC Identity Provider
-* [x] IAM role
-* [x] STS AssumeRoleWithWebIdentity
-* [x] Temporary AWS credentials
-* [x] Terraform Plan in CI
-* [x] Plan JSON
-* [x] OPA compliance gate
-* [x] Intentional compliance failure
-* [x] PR blocking demonstration
-* [x] Compliance restoration
-* [x] Successful PR pipeline
-
-**Result:**
-
-```text
-OIDC Authentication        ✓
-AWS Authorization          ✓
-Terraform Validation       ✓
-TFLint                     ✓
-Checkov                    ✓
-Terraform Plan             ✓
-OPA Policy Enforcement     ✓
-Compliance Gate            ✓
-PR Failure Demonstration   ✓
-PR Recovery Demonstration  ✓
-```
-
-````
-
-### One small recommendation before you push
-
-Since this README contains the **architecture and the actual troubleshooting story**, I'd put it in the repo exactly as above. It gives you a useful interview reference rather than just a list of commands.
+For example, remove the required Owner tag from the Terraform
+configuration.
 
 Then:
 
-```bash
-git add README.md
-git commit -m "Add comprehensive platform compliance documentation"
-git push
-````
+git checkout -b test/compliance-failure
 
-Your repository will then tell the complete story:
+Make the change and push:
 
-**why the platform exists → architecture → AWS OIDC → Terraform → security scanning → policy-as-code → compliance gate → intentional failure → recovery → interview talking points.**
+git add .
+git commit -m "test: demonstrate compliance policy failure"
+git push -u origin test/compliance-failure
+
+Open a pull request.
+
+Expected result:
+
+Terraform Plan
+      |
+      v
+OPA / Conftest
+      |
+      v
+FAIL
+      |
+      v
+Pull Request blocked
+
+Restore the required configuration:
+
+Owner = Platform-Team
+
+Push the fix.
+
+Expected result:
+
+OPA / Conftest
+      |
+      v
+PASS
+      |
+      v
+Pull Request can be merged
+
+26. Production Improvements
+
+This project intentionally focuses on demonstrating the architecture. A
+production implementation would add further controls.
+
+Potential improvements include:
+
+IAM
+
+Separate plan and apply roles
+
+Separate CI and deployment roles
+
+Least-privilege IAM policies
+
+IAM permissions boundaries
+
+AWS Organizations/SCP controls
+
+CloudTrail monitoring
+
+Access Analyzer
+
+Terraform
+
+Remote state with tightly controlled access
+
+State locking where supported/appropriate
+
+Separate environments
+
+Terraform modules
+
+Version pinning
+
+Provider upgrade strategy
+
+CI/CD
+
+Protected main
+
+Required PR approvals
+
+Required status checks
+
+Environment approvals
+
+Separate plan and apply jobs
+
+Artifact retention
+
+Security scanning
+
+Notifications
+
+Compliance
+
+More OPA policies
+
+Policies for encryption
+
+Policies for public access
+
+Required tags
+
+Required logging
+
+Approved regions
+
+Resource naming standards
+
+Cost-control policies
+
+AWS
+
+Dedicated deployment account
+
+Dedicated state account
+
+Multi-account architecture
+
+KMS key management
+
+CloudTrail
+
+GuardDuty
+
+Security Hub
+
+Config rules
+
+27. Next Phase: Jenkins
+
+The GitHub Actions implementation will be duplicated conceptually using
+Jenkins.
+
+The important design principle is:
+
+Do not duplicate the infrastructure or compliance rules
+unnecessarily. Duplicate the CI/CD orchestration layer.
+
+The future architecture will look like:
+
+                         Terraform
+                             |
+               +-------------+-------------+
+               |                           |
+               v                           v
+        GitHub Actions                  Jenkins
+               |                           |
+               v                           v
+       Compliance Pipeline        Compliance Pipeline
+               |                           |
+               +-------------+-------------+
+                             |
+                             v
+                      Terraform Plan
+                             |
+                             v
+                       OPA / Conftest
+                             |
+                             v
+                      Compliance Gate
+                             |
+                             v
+                         Terraform
+                             |
+                             v
+                            AWS
+
+The same:
+
+terraform/
+policies/
+
+can therefore be reused.
+
+The Jenkins implementation will demonstrate how the same platform
+controls can be implemented in another enterprise CI/CD platform.
+
+28. Interview Explanation
+
+A concise way to explain this project in a Senior DevOps interview:
+
+"I built a Terraform platform compliance pipeline using GitHub
+Actions. Pull requests trigger Terraform formatting and validation,
+TFLint, Checkov, and Terraform plan. The plan is converted to JSON and
+evaluated with OPA/Conftest policies. The compliance result acts as a
+merge gate. GitHub Actions authenticates to AWS using OIDC and STS
+rather than long-lived AWS credentials. After the PR passes and is
+merged, a deployment workflow assumes the AWS IAM role through OIDC
+and runs Terraform against an S3 remote backend. The infrastructure
+deployed is an S3 bucket with versioning, KMS encryption, and
+public-access blocking. I also deliberately tested compliance failures
+and resolved real OIDC trust-policy and least-privilege IAM permission
+issues encountered during implementation."
+
+29. Key Lessons
+
+Authentication vs Authorization
+
+OIDC
+ |
+ v
+Authentication / Federation
+ |
+ v
+IAM Role
+ |
+ v
+Authorization through IAM policies
+
+Successfully assuming an IAM role does not mean the role can perform
+every AWS action.
+
+Plan vs Compliance
+
+Terraform Plan
+      |
+      v
+What Terraform intends to change
+      |
+      v
+OPA / Conftest
+      |
+      v
+Is that change allowed?
+
+Configuration vs State vs Infrastructure
+
+.tf files
+   |
+   v
+Terraform
+   |
+   +---- Remote State
+   |
+   v
+AWS
+
+These are separate concepts and should not be confused.
+
+CI vs CD
+
+CI
+ |
+ +--> fmt
+ +--> validate
+ +--> lint
+ +--> security scan
+ +--> plan
+ +--> compliance
+ |
+ +--> Merge
+
+Then:
+
+CD
+ |
+ +--> authenticate
+ +--> init
+ +--> plan
+ +--> apply
+ |
+ +--> AWS
+
+30. Final Project Outcome
+
+The completed GitHub Actions implementation provides:
+
+Terraform infrastructure as code
+
+GitHub Pull Request workflow
+
+Terraform formatting
+
+Terraform validation
+
+TFLint
+
+Checkov
+
+Terraform plan
+
+Terraform plan JSON
+
+OPA/Conftest policy-as-code
+
+Compliance gate
+
+GitHub OIDC authentication
+
+AWS STS federation
+
+IAM role-based access
+
+Temporary AWS credentials
+
+Terraform remote S3 state
+
+Automated Terraform deployment
+
+S3 versioning
+
+KMS encryption
+
+S3 public-access blocking
+
+Intentional compliance failure test
+
+Real IAM/OIDC troubleshooting
+
+Independent AWS verification
+
+The next major milestone is the Jenkins implementation, using the
+same Terraform and compliance architecture.
+
+Project Architecture in One Picture
+
+                       +----------------+
+                       |    Developer   |
+                       +-------+--------+
+                               |
+                               v
+                       +---------------+
+                       | GitHub PR     |
+                       +-------+-------+
+                               |
+                               v
+                  +-------------------------+
+                  | GitHub Actions          |
+                  | PR Compliance           |
+                  +-----------+-------------+
+                              |
+             +----------------+----------------+
+             |                                 |
+             v                                 v
+      GitHub OIDC                         Quality/Security
+             |                                 |
+             v                      +----------+----------+
+         AWS STS                    |          |          |
+             |                      v          v          v
+             v                    TFLint   Checkov    Terraform
+         IAM Role                                       fmt/validate
+             |                                              |
+             v                                              v
+    Temporary Credentials                             Terraform Plan
+                                                            |
+                                                            v
+                                                       tfplan.json
+                                                            |
+                                                            v
+                                                     OPA / Conftest
+                                                            |
+                                                            v
+                                                   +----------------+
+                                                   | COMPLIANCE GATE|
+                                                   +-------+--------+
+                                                           |
+                                               +-----------+-----------+
+                                               |                       |
+                                             PASS                     FAIL
+                                               |                       |
+                                               v                       v
+                                             MERGE                   BLOCK
+                                               |
+                                               v
+                                             main
+                                               |
+                                               v
+                                    +----------------------+
+                                    | Terraform Deployment |
+                                    +----------+-----------+
+                                               |
+                                               v
+                                          GitHub OIDC
+                                               |
+                                               v
+                                            AWS STS
+                                               |
+                                               v
+                                           IAM Role
+                                               |
+                                               v
+                                          Terraform
+                                            Apply
+                                               |
+                                               v
+                                      +-------------------+
+                                      |       AWS S3      |
+                                      |                   |
+                                      | Versioning   ✓    |
+                                      | KMS          ✓    |
+                                      | Public Block ✓    |
+                                      +-------------------+
+
+This is the current, end-to-end state of the project.
