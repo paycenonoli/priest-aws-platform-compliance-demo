@@ -1,6 +1,3 @@
-Absolutely, boss. This README should be **self-explanatory enough that you can come back months from now and reconstruct the entire demo**, including the *why*, the architecture, AWS OIDC setup, Terraform, Checkov, TFLint, OPA/Conftest, the intentional failure test, and the GitHub PR flow.
-
-Below is a complete `README.md` you can paste directly into your repository.
 
 ````markdown
 # AWS Platform Compliance CI/CD Demo
