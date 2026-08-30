@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
     tar \
     git \
     python3 \
-    python3-pip \
+    python3-venv \
     gnupg \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -41,7 +41,10 @@ RUN curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/in
     | bash
 
 # Checkov
-RUN pip3 install --break-system-packages checkov
+RUN python3 -m venv /opt/checkov-venv \
+    && /opt/checkov-venv/bin/pip install --upgrade pip \
+    && /opt/checkov-venv/bin/pip install checkov \
+    && ln -s /opt/checkov-venv/bin/checkov /usr/local/bin/checkov
 
 # OPA
 RUN curl -L \
