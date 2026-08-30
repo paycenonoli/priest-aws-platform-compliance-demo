@@ -14,7 +14,6 @@ RUN apt-get update && apt-get install -y \
     python3 \
     python3-pip \
     gnupg \
-    software-properties-common \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
